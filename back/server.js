@@ -38,7 +38,7 @@ function generateRandomUsername() {
   const animal = animals[Math.floor(Math.random() * animals.length)];
   const number = Math.floor(Math.random() * 100);
   
-  return `${adjective}${animal}${number}`;
+  return `${adjective} ${animal} ${number}`;
 }
 
 // Helper function to get room info
