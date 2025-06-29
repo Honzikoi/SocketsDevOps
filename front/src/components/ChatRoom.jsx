@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
+import GameRoom from './GameRoom';
 import './ChatRoom.css';
 
 function ChatRoom({ onBack }) {
@@ -12,6 +13,7 @@ function ChatRoom({ onBack }) {
   const [showCreateRoom, setShowCreateRoom] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomDesc, setNewRoomDesc] = useState('');
+  const [roomUsers, setRoomUsers] = useState([]);
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -34,6 +36,7 @@ function ChatRoom({ onBack }) {
     // Successfully joined a room
     newSocket.on('joined_room', (roomInfo) => {
       setCurrentRoom(roomInfo);
+      setRoomUsers(roomInfo.users || []);
       setMessages([]);
       setMessages([{
         type: 'system',
@@ -45,6 +48,7 @@ function ChatRoom({ onBack }) {
     // Left a room
     newSocket.on('left_room', () => {
       setCurrentRoom(null);
+      setRoomUsers([]);
       setMessages([]);
     });
 
@@ -65,10 +69,19 @@ function ChatRoom({ onBack }) {
     // User events
     newSocket.on('user_joined', (data) => {
       setMessages(prev => [...prev, { type: 'system', ...data, timestamp: new Date() }]);
+      // Update room users when someone joins
+      setRoomUsers(prev => {
+        if (!prev.includes(data.username)) {
+          return [...prev, data.username];
+        }
+        return prev;
+      });
     });
 
     newSocket.on('user_left', (data) => {
       setMessages(prev => [...prev, { type: 'system', ...data, timestamp: new Date() }]);
+      // Update room users when someone leaves
+      setRoomUsers(prev => prev.filter(user => user !== data.username));
     });
 
     return () => newSocket.disconnect();
@@ -236,6 +249,14 @@ function ChatRoom({ onBack }) {
             </div>
           )}
         </div>
+
+        {/* Game Room - Right Panel */}
+        <GameRoom 
+          socket={socket}
+          username={username}
+          currentRoom={currentRoom}
+          users={roomUsers}
+        />
       </div>
       
       {/* Create Room Modal */}
