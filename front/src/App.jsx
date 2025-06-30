@@ -18,13 +18,6 @@ function App() {
           >
             🏠 Browse Rooms
           </button>
-          
-          <button 
-            className="nav-button data-button"
-            onClick={() => setCurrentPage('data')}
-          >
-            📊 View API Data
-          </button>
         </div>
       </div>
       
