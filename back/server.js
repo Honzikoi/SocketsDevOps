@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const chatHandler = require('./handlers/chat');
+const gameHandler = require('./handlers/game');
 require('dotenv').config();
 
 const app = express();
@@ -25,9 +27,13 @@ app.use(express.json());
 
 console.log('✅ Middleware configured');
 
-// In-memory storage for rooms and users
-const rooms = new Map(); // roomId -> room info
-const users = new Map(); // socketId -> user info
+// Shared data storage
+const sharedData = {
+  rooms: new Map(),
+  users: new Map(),
+  games: new Map(),
+  readyPlayers: new Map()
+};
 
 // Helper function to generate random usernames
 function generateRandomUsername() {
@@ -43,11 +49,10 @@ function generateRandomUsername() {
 
 // Helper function to get room info
 function getRoomInfo(roomId) {
-  const room = rooms.get(roomId);
+  const room = sharedData.rooms.get(roomId);
   if (!room) return null;
   
-  // Count users in this room
-  const usersInRoom = Array.from(users.values()).filter(user => user.currentRoom === roomId);
+  const usersInRoom = Array.from(sharedData.users.values()).filter(user => user.currentRoom === roomId);
   
   return {
     id: roomId,
@@ -63,15 +68,15 @@ function getRoomInfo(roomId) {
 // Helper function to get all rooms
 function getAllRooms() {
   const roomList = [];
-  for (const roomId of rooms.keys()) {
+  for (const roomId of sharedData.rooms.keys()) {
     roomList.push(getRoomInfo(roomId));
   }
-  return roomList.sort((a, b) => b.userCount - a.userCount); // Sort by user count
+  return roomList.sort((a, b) => b.userCount - a.userCount);
 }
 
 // Create default room
 const defaultRoomId = 'general';
-rooms.set(defaultRoomId, {
+sharedData.rooms.set(defaultRoomId, {
   name: 'General Chat',
   description: 'Main chat room for everyone',
   createdBy: 'System',
@@ -83,7 +88,7 @@ io.on('connection', (socket) => {
   const username = generateRandomUsername();
   
   // Store user info
-  users.set(socket.id, {
+  sharedData.users.set(socket.id, {
     username: username,
     currentRoom: null,
     joinedAt: new Date()
@@ -97,126 +102,13 @@ io.on('connection', (socket) => {
     rooms: getAllRooms()
   });
 
-  // Handle getting room list
-  socket.on('get_rooms', () => {
-    socket.emit('rooms_list', getAllRooms());
-  });
-
-  // Handle creating a new room
-  socket.on('create_room', (data) => {
-    const { name, description } = data;
-    const user = users.get(socket.id);
-    
-    if (!user || !name) return;
-    
-    // Generate room ID
-    const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    
-    // Create room
-    rooms.set(roomId, {
-      name: name,
-      description: description || '',
-      createdBy: user.username,
-      createdAt: new Date()
-    });
-    
-    console.log(`🏠 ${user.username} created room: ${name}`);
-    
-    // Send updated room list to everyone
-    io.emit('rooms_list', getAllRooms());
-    
-    // Automatically join the creator to the new room
-    socket.emit('room_created', { roomId: roomId });
-  });
-
-  // Handle joining a room
-  socket.on('join_room', (data) => {
-    const { roomId } = data;
-    const user = users.get(socket.id);
-    
-    if (!user || !rooms.has(roomId)) return;
-    
-    // Leave current room if any
-    if (user.currentRoom) {
-      socket.leave(user.currentRoom);
-      socket.to(user.currentRoom).emit('user_left', {
-        username: user.username,
-        message: `${user.username} left the room`
-      });
-    }
-    
-    // Join new room
-    socket.join(roomId);
-    user.currentRoom = roomId;
-    
-    console.log(`🚪 ${user.username} joined room: ${roomId}`);
-    
-    // Send room info to user
-    const roomInfo = getRoomInfo(roomId);
-    socket.emit('joined_room', roomInfo);
-    
-    // Notify others in the room
-    socket.to(roomId).emit('user_joined', {
-      username: user.username,
-      message: `${user.username} joined the room`
-    });
-    
-    // Update room list for everyone (user count changed)
-    io.emit('rooms_list', getAllRooms());
-  });
-
-  // Handle sending messages in a room
-  socket.on('send_message', (data) => {
-    const { message } = data;
-    const user = users.get(socket.id);
-    
-    if (!user || !user.currentRoom || !message) return;
-    
-    const messageData = {
-      id: Date.now() + Math.random(),
-      username: user.username,
-      message: message,
-      timestamp: new Date().toISOString(),
-      roomId: user.currentRoom
-    };
-    
-    // Send message to everyone in the room
-    io.to(user.currentRoom).emit('receive_message', messageData);
-    
-    console.log(`💬 [${user.currentRoom}] ${user.username}: ${message}`);
-  });
-
-  // Handle leaving a room
-  socket.on('leave_room', () => {
-    const user = users.get(socket.id);
-    
-    if (!user || !user.currentRoom) return;
-    
-    const roomId = user.currentRoom;
-    socket.leave(roomId);
-    
-    // Notify others
-    socket.to(roomId).emit('user_left', {
-      username: user.username,
-      message: `${user.username} left the room`
-    });
-    
-    user.currentRoom = null;
-    
-    console.log(`🚪 ${user.username} left room: ${roomId}`);
-    
-    // Update room list for everyone
-    io.emit('rooms_list', getAllRooms());
-    
-    // Send updated room list to the user
-    socket.emit('left_room');
-    socket.emit('rooms_list', getAllRooms());
-  });
+  // Initialize chat and game handlers
+  chatHandler(socket, io, sharedData, { getRoomInfo, getAllRooms });
+  gameHandler(socket, io, sharedData);
 
   // Handle disconnect
   socket.on('disconnect', () => {
-    const user = users.get(socket.id);
-    
+    const user = sharedData.users.get(socket.id);
     if (user) {
       // Leave current room if any
       if (user.currentRoom) {
@@ -224,10 +116,16 @@ io.on('connection', (socket) => {
           username: user.username,
           message: `${user.username} disconnected`
         });
+        
+        // Remove from ready players
+        const roomReadyPlayers = sharedData.readyPlayers.get(user.currentRoom);
+        if (roomReadyPlayers) {
+          roomReadyPlayers.delete(user.username);
+        }
       }
       
       console.log(`❌ ${user.username} disconnected`);
-      users.delete(socket.id);
+      sharedData.users.delete(socket.id);
       
       // Update room list for everyone
       io.emit('rooms_list', getAllRooms());
@@ -239,8 +137,8 @@ io.on('connection', (socket) => {
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy',
-    totalRooms: rooms.size,
-    totalUsers: users.size,
+    totalRooms: sharedData.rooms.size,
+    totalUsers: sharedData.users.size,
     timestamp: new Date().toISOString()
   });
 });
@@ -254,7 +152,5 @@ server.listen(PORT, () => {
   console.log(`🚀 Server with rooms running on port ${PORT}`);
   console.log(`📊 Default room "${defaultRoomId}" created`);
   console.log(`🌐 Server ready to accept connections`);
-  
-  // Test that we can receive requests
   console.log(`💡 Test the server: curl http://localhost:${PORT}/health`);
 });
