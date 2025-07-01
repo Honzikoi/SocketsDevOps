@@ -49,6 +49,41 @@ function GameRoom({ socket, username, currentRoom, users = [] }) {
       answers: ["Atlantic", "Indian", "Arctic", "Pacific"],
       correct: 3,
       points: 100
+    },
+    {
+      id: 6,
+      question: "Who wrote 'Romeo and Juliet'?",
+      answers: ["Charles Dickens", "Victor Hugo", "William Shakespeare", "Molière"],
+      correct: 2,
+      points: 100
+    },
+    {
+      id: 7,
+      question: "What is the smallest country in the world?",
+      answers: ["Monaco", "San Marino", "Vatican City", "Liechtenstein"],
+      correct: 2,
+      points: 100
+    },
+    {
+      id: 8,
+      question: "What is the chemical symbol for gold?",
+      answers: ["Ag", "Au", "Gd", "Go"],
+      correct: 1,
+      points: 100
+    },
+    {
+      id: 9,
+      question: "How many continents are there on Earth?",
+      answers: ["5", "6", "7", "8"],
+      correct: 2,
+      points: 100
+    },
+    {
+      id: 10,
+      question: "Which famous scientist developed the theory of general relativity?",
+      answers: ["Isaac Newton", "Galileo Galilei", "Nikola Tesla", "Albert Einstein"],
+      correct: 3,
+      points: 100
     }
   ];
 
