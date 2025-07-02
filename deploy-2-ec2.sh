@@ -22,13 +22,13 @@ echo "⏳ Waiting for EC2 to be ready (30 seconds)..."
 sleep 30
 
 # Step 3: Deploy your app (if you have SSH access)
-echo "🐳 Deploying SocketDevOps..."
+echo "🐳 Deploying SocketsDevOps..."
 
 # Option A: If you have SSH key configured
 # ssh -i ~/.ssh/your-key.pem ubuntu@$EC2_IP << 'EOF'
 #   cd /home/ubuntu
-#   git clone https://github.com/yourusername/socketdevops.git
-#   cd socketdevops
+#   git clone https://github.com/Honzikoi/SocketsDevOps.git
+#   cd SocketsDevOps
 #   docker-compose up -d --build
 # EOF
 
