@@ -38,8 +38,8 @@ resource "aws_instance" "app_instance" {
     
     git clone https://github.com/Honzikoi/SocketsDevOps.git
     
-    if [ -d "SocketDevOps" ]; then
-        cd SocketDevOps
+    if [ -d "SocketsDevOps" ]; then
+        cd SocketsDevOps
         chown -R ubuntu:ubuntu /home/ubuntu/socketdevops
         
         echo "Repository cloned, starting deployment at $(date)"
@@ -63,6 +63,6 @@ resource "aws_instance" "app_instance" {
   EOF
 
   tags = {
-    Name = "socketdevops-instance"
+    Name = "SocketsDevOps-instance"
   }
 }
