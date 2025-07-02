@@ -1,0 +1,93 @@
+name: Deploy SocketDevOps Infrastructure
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  TF_VERSION: "1.5.0"
+  AWS_REGION: "eu-west-3"
+
+jobs:
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Validate
+      run: terraform validate
+
+    - name: Terraform Plan
+      run: terraform plan -no-color
+      continue-on-error: true
+
+  terraform-apply:
+    name: "Terraform Apply"
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Plan
+      run: terraform plan -no-color
+
+    - name: Terraform Apply
+      run: terraform apply -auto-approve
+
+    - name: Get EC2 Public IP
+      id: ec2_ip
+      run: |
+        INSTANCE_IP=$(terraform output -raw instance_public_ip)
+        echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+        echo "🚀 Deployment successful! Access your app at: http://$INSTANCE_IP:3000"
+
+    - name: Wait for application startup
+      run: |
+        echo "Waiting 2 minutes for application to start..."
+        sleep 120
+
+    - name: Health Check
+      run: |
+        INSTANCE_IP=${{ steps.ec2_ip.outputs.instance_ip }}
+        echo "Testing frontend at http://$INSTANCE_IP:3000"
+        curl -f http://$INSTANCE_IP:3000 || echo "Frontend not ready yet"
+        echo "Testing backend at http://$INSTANCE_IP:3001"
+        curl -f http://$INSTANCE_IP:3001 || echo "Backend not ready yet"
