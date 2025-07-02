@@ -2,6 +2,8 @@
  * Game Handler - Manages all game-related Socket.IO events
  */
 
+const { getDB } = require('../db');
+
 function gameHandler(socket, io, sharedData) {
   
   // Handle player ready toggle
@@ -90,6 +92,29 @@ function gameHandler(socket, io, sharedData) {
     
     console.log(`🎮 ${user.username} answered question ${questionId} with option ${answerIndex}`);
   });
+
+  socket.on('save_score', async ({ username, points }) => {
+    try {
+      const db = getDB();
+      await db.run("INSERT INTO scores (username, points) VALUES (?, ?)", [username, points]);
+      socket.emit('score_saved');
+    } catch (err) {
+      console.error("❌ Error saving score:", err);
+      socket.emit('error', { message: 'Erreur enregistrement score' });
+    }
+  });
+
+  socket.on('get_scores', async () => {
+    try {
+      const db = getDB();
+      const scores = await db.all("SELECT username, points, played_at FROM scores ORDER BY points DESC LIMIT 10");
+      socket.emit('score_list', scores);
+    } catch (err) {
+      console.error("❌ Error fetching scores:", err);
+      socket.emit('error', { message: 'Erreur récupération classement' });
+    }
+  });
+
 
   // Handle game reset
   socket.on('reset_game', (data) => {

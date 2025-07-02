@@ -1,3 +1,4 @@
+const { connectToDatabase, getDB } = require('./db');
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -147,10 +148,27 @@ app.get('/api/rooms', (req, res) => {
   res.json(getAllRooms());
 });
 
+app.get('/api/scores', async (req, res) => {
+  try {
+    const db = getDB();
+    const scores = await db.all("SELECT username, points, played_at FROM scores ORDER BY points DESC LIMIT 10");
+    res.json(scores);
+  } catch (err) {
+    console.error("❌ Error fetching scores:", err);
+    res.status(500).json({ error: 'Erreur récupération scores' });
+  }
+});
+
+
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`🚀 Server with rooms running on port ${PORT}`);
-  console.log(`📊 Default room "${defaultRoomId}" created`);
-  console.log(`🌐 Server ready to accept connections`);
-  console.log(`💡 Test the server: curl http://localhost:${PORT}/health`);
+
+connectToDatabase().then(() => {
+  server.listen(PORT, () => {
+    console.log(`🚀 Server with rooms running on port ${PORT}`);
+    console.log(`📊 Default room "${defaultRoomId}" created`);
+    console.log(`🌐 Server ready to accept connections`);
+    console.log(`💡 Test the server: curl http://localhost:${PORT}/health`);
+  });
+}).catch((err) => {
+  console.error("❌ Failed to init DB", err);
 });

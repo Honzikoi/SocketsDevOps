@@ -121,6 +121,21 @@ function GameRoom({ socket, username, currentRoom, users = [] }) {
       setGameState('finished');
       setGameResults(data);
       setScores(data.finalScores);
+
+      socket.emit('save_score', {
+        username: username, 
+        points: data.finalScores[username] || 0
+      });
+    });
+
+    socket.on('score_saved', () => {
+      console.log('✅ Score saved successfully');
+    });
+
+    socket.on('error', (err) => {
+      if (err.message === 'Error saving score') {
+        console.error('❌ Error saving score');
+      }
     });
 
     socket.on('game_reset', () => {
@@ -141,8 +156,10 @@ function GameRoom({ socket, username, currentRoom, users = [] }) {
       socket.off('question_results');
       socket.off('game_finished');
       socket.off('game_reset');
+      socket.off('score_saved');
+      socket.off('error');
     };
-  }, [socket]);
+  }, [socket, username]);
 
   // Timer countdown
   useEffect(() => {
