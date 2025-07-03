@@ -1,12 +1,12 @@
 resource "aws_instance" "app_instance" {
-  ami           = "ami-04ec97dc75ac850b1"
-  instance_type = "t2.micro"
+  ami           = var.ami_id
+  instance_type = var.instance_type
   subnet_id     = aws_subnet.public_subnet.id
-  
-  vpc_security_group_ids = [aws_security_group.instance_sg.id]
-  key_name = "socketdevops-key"
 
- user_data = <<-EOF
+  vpc_security_group_ids = [aws_security_group.instance_sg.id]
+  key_name               = var.key_name
+
+  user_data = <<-EOF
   #!/bin/bash
 
   # Log everything
@@ -47,6 +47,6 @@ resource "aws_instance" "app_instance" {
   EOF
 
   tags = {
-    Name = "SocketsDevOps-instance"
+    Name = var.instance_name
   }
 }

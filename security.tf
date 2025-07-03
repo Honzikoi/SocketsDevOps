@@ -1,5 +1,5 @@
 resource "aws_security_group" "instance_sg" {
-  name        = "socketdevops-sg"
+  name        = var.security_group_name
   description = "Allow HTTP, SSH and app ports for SocketDevOps"
   vpc_id      = aws_vpc.main_vpc.id
 
@@ -49,6 +49,6 @@ resource "aws_security_group" "instance_sg" {
   }
 
   tags = {
-    Name = "socketdevops-security-group"
+    Name = var.security_group_name
   }
 }
