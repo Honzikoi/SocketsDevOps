@@ -1,4 +1,4 @@
-name: Deploy SocketDevOps Infrastructure
+name: Deploy SocketDevOps with Terraform + Ansible
 
 on:
   push:
@@ -34,16 +34,14 @@ jobs:
 
     - name: Terraform Init
       run: terraform init
-
-    - name: Terraform Validate
-      run: terraform validate
+      working-directory: ./terraform
 
     - name: Terraform Plan
       run: terraform plan -no-color
-      continue-on-error: true
+      working-directory: ./terraform
 
-  terraform-apply:
-    name: "Terraform Apply"
+  deploy:
+    name: "Deploy Infrastructure and Application"
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
@@ -55,44 +53,89 @@ jobs:
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TF_VERSION }}
-
-    # - name: Test AWS credentials
-    #   run: |
-    #     aws sts get-caller-identity
-    #     aws ec2 describe-regions
+        terraform_wrapper: false  # Important for getting outputs
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: eu-west-3
+        aws-region: ${{ env.AWS_REGION }}
 
     - name: Terraform Init
       run: terraform init
-
-    - name: Terraform Plan
-      run: terraform plan -no-color
+      working-directory: ./terraform
 
     - name: Terraform Apply
       run: terraform apply -auto-approve
+      working-directory: ./terraform
 
     - name: Get EC2 Public IP
       id: ec2_ip
       run: |
         INSTANCE_IP=$(terraform output -raw instance_public_ip)
         echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-        echo "🚀 Deployment successful! Access your app at: http://$INSTANCE_IP:3000"
+        echo "🚀 EC2 Instance created at: $INSTANCE_IP"
+      working-directory: ./terraform
 
-    - name: Wait for application startup
+    - name: Setup SSH Key
       run: |
-        echo "Waiting 2 minutes for application to start..."
-        sleep 120
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/socketdevops-key.pem
+        chmod 600 ~/.ssh/socketdevops-key.pem
 
-    - name: Health Check
+    - name: Install Ansible
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ansible
+
+    - name: Wait for SSH to be ready
+      run: |
+        for i in {1..30}; do
+          if ssh -i ~/.ssh/socketdevops-key.pem -o ConnectTimeout=5 -o StrictHostKeyChecking=no ubuntu@${{ steps.ec2_ip.outputs.instance_ip }} echo "SSH Ready"; then
+            echo "SSH connection successful"
+            break
+          fi
+          echo "Waiting for SSH... attempt $i/30"
+          sleep 10
+        done
+
+    - name: Create dynamic inventory
+      run: |
+        cat > ansible/inventory.yml << EOF
+        all:
+          children:
+            ec2_instances:
+              hosts:
+                ${{ steps.ec2_ip.outputs.instance_ip }}:
+              vars:
+                ansible_user: ubuntu
+                ansible_ssh_private_key_file: ~/.ssh/socketdevops-key.pem
+                ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+        EOF
+
+    - name: Run Ansible Playbook
+      run: |
+        ansible-playbook -i inventory.yml playbook.yml -v
+      working-directory: ./ansible
+
+    - name: Verify Deployment
       run: |
         INSTANCE_IP=${{ steps.ec2_ip.outputs.instance_ip }}
-        echo "Testing frontend at http://$INSTANCE_IP:3000"
-        curl -f http://$INSTANCE_IP:3000 || echo "Frontend not ready yet"
-        echo "Testing backend at http://$INSTANCE_IP:3001"
-        curl -f http://$INSTANCE_IP:3001 || echo "Backend not ready yet"
+        echo "🔍 Checking application health..."
+        
+        # Test frontend
+        if curl -f -m 10 http://$INSTANCE_IP:3000 >/dev/null 2>&1; then
+          echo "✅ Frontend is accessible at http://$INSTANCE_IP:3000"
+        else
+          echo "❌ Frontend not accessible"
+        fi
+        
+        # Test backend
+        if curl -f -m 10 http://$INSTANCE_IP:3001 >/dev/null 2>&1; then
+          echo "✅ Backend is accessible at http://$INSTANCE_IP:3001"
+        else
+          echo "❌ Backend not accessible"
+        fi
+        
+        echo "🎉 Deployment completed! Access your app at: http://$INSTANCE_IP:3000"

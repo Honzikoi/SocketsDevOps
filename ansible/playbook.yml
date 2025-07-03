@@ -1,0 +1,430 @@
+---
+# Socket.IO Chat App Deployment Playbook
+# This playbook configures both frontend and backend servers with Docker
+
+- name: Configure All Servers - Common Setup
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    common_packages:
+      - curl
+      - wget
+      - git
+      - unzip
+      - htop
+      - tree
+      - jq
+      - ufw
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - software-properties-common
+  
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      tags: [setup, common]
+
+    - name: Install common packages
+      apt:
+        name: "{{ common_packages }}"
+        state: present
+        update_cache: yes
+      tags: [setup, common]
+
+    - name: Configure timezone
+      timezone:
+        name: UTC
+      tags: [setup, common]
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      tags: [docker, setup]
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+        state: present
+      tags: [docker, setup]
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+      tags: [docker, setup]
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+      tags: [docker, setup]
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+      tags: [docker, setup]
+
+    - name: Test Docker installation
+      shell: docker --version
+      register: docker_version
+      become_user: ubuntu
+      tags: [docker, setup]
+
+    - name: Display Docker version
+      debug:
+        msg: "Docker installed: {{ docker_version.stdout }}"
+      tags: [docker, setup]
+
+- name: Configure Frontend Server
+  hosts: frontend
+  become: yes
+  
+  vars:
+    app_directory: /var/www/frontend
+    nginx_config: "{{ app_directory }}/nginx.conf"
+    backend_private_ip: "{{ hostvars['backend_server']['ansible_host'] }}"
+  
+  tasks:
+    - name: Configure UFW for frontend
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "22"   # SSH
+        - "80"   # HTTP
+        - "443"  # HTTPS
+      tags: [security, frontend]
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      tags: [security, frontend]
+
+    - name: Create frontend application directory
+      file:
+        path: "{{ app_directory }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      tags: [deployment, frontend]
+
+    - name: Copy frontend application files
+      synchronize:
+        src: ./frontend/
+        dest: "{{ app_directory }}/"
+        delete: yes
+        recursive: yes
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=dist"
+      become_user: ubuntu
+      tags: [deployment, frontend]
+
+    - name: Generate nginx configuration from template
+      template:
+        src: nginx-frontend.conf.j2
+        dest: "{{ nginx_config }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      notify: rebuild frontend container
+      tags: [configuration, frontend]
+
+    - name: Generate frontend Dockerfile from template
+      template:
+        src: frontend-dockerfile.j2
+        dest: "{{ app_directory }}/Dockerfile"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      notify: rebuild frontend container
+      tags: [configuration, frontend]
+
+    - name: Check if frontend container exists
+      shell: docker ps -a --format "table {{.Names}}" | grep -w frontend-container || echo "not found"
+      register: frontend_container_check
+      become_user: ubuntu
+      tags: [deployment, frontend]
+
+    - name: Build and deploy frontend container
+      shell: |
+        cd {{ app_directory }}
+        echo "Building frontend application..."
+        docker build -t {{ project_name }}-frontend .
+        
+        # Stop and remove existing container if it exists
+        if docker ps -q -f name=frontend-container; then
+          echo "Stopping existing container..."
+          docker stop frontend-container
+        fi
+        if docker ps -aq -f name=frontend-container; then
+          echo "Removing existing container..."
+          docker rm frontend-container
+        fi
+        
+        # Run new container
+        echo "Starting new frontend container..."
+        docker run -d \
+          --name frontend-container \
+          --restart {{ restart_policy }} \
+          -p {{ frontend_port }}:80 \
+          {{ project_name }}-frontend
+        
+        echo "Frontend deployment completed successfully!"
+      become_user: ubuntu
+      tags: [deployment, frontend]
+
+    - name: Verify frontend container is running
+      shell: docker ps --filter name=frontend-container --format "table {{.Names}}\t{{.Status}}"
+      register: frontend_status
+      become_user: ubuntu
+      tags: [verification, frontend]
+
+    - name: Display frontend container status
+      debug:
+        msg: "Frontend container status: {{ frontend_status.stdout }}"
+      tags: [verification, frontend]
+
+  handlers:
+    - name: rebuild frontend container
+      shell: |
+        cd {{ app_directory }}
+        docker build -t {{ project_name }}-frontend .
+        if docker ps -q -f name=frontend-container; then
+          docker stop frontend-container
+          docker rm frontend-container
+        fi
+        docker run -d \
+          --name frontend-container \
+          --restart {{ restart_policy }} \
+          -p {{ frontend_port }}:80 \
+          {{ project_name }}-frontend
+      become_user: ubuntu
+
+- name: Configure Backend Server
+  hosts: backend
+  become: yes
+  
+  vars:
+    app_directory: /var/www/backend
+    data_directory: /var/www/backend/data
+    docker_volume_name: "{{ project_name }}-backend-data"
+  
+  tasks:
+    - name: Configure UFW for backend
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "22"    # SSH
+        - "{{ backend_port }}"  # Socket.IO server
+      tags: [security, backend]
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      tags: [security, backend]
+
+    - name: Create backend application directory
+      file:
+        path: "{{ app_directory }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      tags: [deployment, backend]
+
+    - name: Create backend data directory
+      file:
+        path: "{{ data_directory }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      tags: [deployment, backend]
+
+    - name: Copy backend application files
+      synchronize:
+        src: ./backend/
+        dest: "{{ app_directory }}/"
+        delete: yes
+        recursive: yes
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=db.sqlite"
+          - "--exclude=data/"
+      become_user: ubuntu
+      tags: [deployment, backend]
+
+    - name: Generate backend Dockerfile from template
+      template:
+        src: backend-dockerfile.j2
+        dest: "{{ app_directory }}/Dockerfile"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      notify: rebuild backend container
+      tags: [configuration, backend]
+
+    - name: Generate backend environment file
+      template:
+        src: backend-env.j2
+        dest: "{{ app_directory }}/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+      notify: rebuild backend container
+      tags: [configuration, backend]
+
+    - name: Create Docker volume for persistent data
+      shell: docker volume create {{ docker_volume_name }} || true
+      become_user: ubuntu
+      tags: [deployment, backend]
+
+    - name: Check if backend container exists
+      shell: docker ps -a --format "table {{.Names}}" | grep -w backend-container || echo "not found"
+      register: backend_container_check
+      become_user: ubuntu
+      tags: [deployment, backend]
+
+    - name: Build and deploy backend container
+      shell: |
+        cd {{ app_directory }}
+        echo "Building backend application..."
+        docker build -t {{ project_name }}-backend .
+        
+        # Stop and remove existing container if it exists
+        if docker ps -q -f name=backend-container; then
+          echo "Stopping existing container..."
+          docker stop backend-container
+        fi
+        if docker ps -aq -f name=backend-container; then
+          echo "Removing existing container..."
+          docker rm backend-container
+        fi
+        
+        # Run new container with persistent volume
+        echo "Starting new backend container..."
+        docker run -d \
+          --name backend-container \
+          --restart {{ restart_policy }} \
+          -p {{ backend_port }}:{{ backend_port }} \
+          -v {{ docker_volume_name }}:/app/data \
+          -v {{ data_directory }}:/app/data \
+          --env-file {{ app_directory }}/.env \
+          {{ project_name }}-backend
+        
+        echo "Backend deployment completed successfully!"
+      become_user: ubuntu
+      tags: [deployment, backend]
+
+    - name: Wait for backend service to start
+      wait_for:
+        port: "{{ backend_port }}"
+        host: "{{ ansible_host }}"
+        delay: 10
+        timeout: 60
+      tags: [verification, backend]
+
+    - name: Verify backend container is running
+      shell: docker ps --filter name=backend-container --format "table {{.Names}}\t{{.Status}}"
+      register: backend_status
+      become_user: ubuntu
+      tags: [verification, backend]
+
+    - name: Display backend container status
+      debug:
+        msg: "Backend container status: {{ backend_status.stdout }}"
+      tags: [verification, backend]
+
+    - name: Test backend health endpoint
+      uri:
+        url: "http://{{ ansible_host }}:{{ backend_port }}/health"
+        method: GET
+        timeout: 10
+      register: health_check
+      ignore_errors: yes
+      tags: [verification, backend]
+
+    - name: Display backend health check result
+      debug:
+        msg: "Backend health check: {{ health_check.status | default('Failed') }}"
+      tags: [verification, backend]
+
+  handlers:
+    - name: rebuild backend container
+      shell: |
+        cd {{ app_directory }}
+        docker build -t {{ project_name }}-backend .
+        if docker ps -q -f name=backend-container; then
+          docker stop backend-container
+          docker rm backend-container
+        fi
+        docker run -d \
+          --name backend-container \
+          --restart {{ restart_policy }} \
+          -p {{ backend_port }}:{{ backend_port }} \
+          -v {{ docker_volume_name }}:/app/data \
+          --env-file {{ app_directory }}/.env \
+          {{ project_name }}-backend
+      become_user: ubuntu
+
+- name: Post-Deployment Verification
+  hosts: all
+  become: yes
+  
+  tasks:
+    - name: Display deployment summary
+      debug:
+        msg: |
+          🚀 Deployment Summary:
+          - Server: {{ inventory_hostname }} ({{ server_type }})
+          - Docker Status: Running
+          - Application: {{ project_name }}
+          - Environment: {{ environment }}
+      tags: [verification, summary]
+
+    - name: Show running containers
+      shell: docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+      register: container_list
+      become_user: ubuntu
+      tags: [verification, summary]
+
+    - name: Display running containers
+      debug:
+        msg: "Running containers:\n{{ container_list.stdout }}"
+      tags: [verification, summary]
+
+    - name: Show disk usage
+      shell: df -h /var/www
+      register: disk_usage
+      tags: [verification, summary]
+
+    - name: Display disk usage
+      debug:
+        msg: "Disk usage:\n{{ disk_usage.stdout }}"
+      tags: [verification, summary]

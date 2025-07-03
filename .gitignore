@@ -149,3 +149,5 @@ dist
 terraform.tfstate*
 .terraform/
 .terraform.lock.hcl
+socketdevops-key
+socketdevops-key.pub
