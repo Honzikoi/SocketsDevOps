@@ -73,7 +73,7 @@ variable "key_name" {
 variable "ami_id" {
   description = "AMI ID for the EC2 instance"
   type        = string
-  default     = "ami-04ec97dc75ac850b"
+  default     = "ami-04ec97dc75ac850b1"
 }
 
 variable "security_group_name" {
